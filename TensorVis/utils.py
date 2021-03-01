@@ -1,5 +1,35 @@
 
 import numpy as np
+import tensorflow as tf
+
+
+@tf.function
+def unit_interval(x, xmin, xmax, scale_factor=1.):
+    """
+    Rescale tensor values to lie on the unit interval.
+    
+    If values go beyond the stated xmin/xmax, they are rescaled 
+    in the same way, but will be outside the unit interval.
+    
+    Parameters
+    ----------
+    x : Tensor
+        Input tensor, of any shape.
+    
+    xmin, xmax : float
+        Minimum and maximum values, which will be rescaled to the 
+        boundaries of the unit interval: [xmin, xmax] -> [0, 1].
+    
+    scale_factor : float, optional
+        Scale the unit interval by some arbitrary factor, so that 
+        the output tensor values lie in the interval [0, scale_factor].
+    
+    Returns
+    -------
+    y : Tensor
+        Rescaled version of x.
+    """
+    return scale_factor * (x - xmin) / (xmax - xmin)
 
 
 def build_hex_array(hex_spec=(3,4), ants_per_row=None, d=14.6):
