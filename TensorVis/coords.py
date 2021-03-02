@@ -6,9 +6,11 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import FK5, ICRS
 
+HERA_LATITUDE = tf.constant(-30.7215*np.pi/180., dtype=tf.float64)
+C = tf.constant(299792458.) # speed of light in m/s
 
 @tf.function
-def eq_to_az_za(ra, dec, lst, latitude=tf.constant(-30.7215*np.pi/180.)):
+def eq_to_az_za(ra, dec, lst, latitude=HERA_LATITUDE):
     """
     Convert equatorial (RA/Dec) coordinates to azimuth and zenith angle.
     
@@ -23,7 +25,7 @@ def eq_to_az_za(ra, dec, lst, latitude=tf.constant(-30.7215*np.pi/180.)):
         Local sidereal time, in radians.
     
     latitude : float, optional
-        Latitude, in radians.
+        Latitude, in radians. Default: HERA_LATITUDE.
     
     Returns
     -------
@@ -40,7 +42,7 @@ def eq_to_az_za(ra, dec, lst, latitude=tf.constant(-30.7215*np.pi/180.)):
     sin_az = tf.math.sin(ra - lst) * tf.math.cos(dec) / tf.math.cos(alt)
     cos_az = (tf.math.sin(dec) - tf.math.sin(lat) * sin_alt) \
            / (tf.math.cos(lat) * tf.math.cos(alt))
-    return tf.constant(0.5*np.pi) - alt, \
+    return tf.constant(0.5*np.pi, dtype=alt.dtype) - alt, \
            tf.math.sign(tf.math.asin(sin_az)) * tf.math.acos(cos_az)
 
 
@@ -64,8 +66,7 @@ def az_za_to_delay(az, za, antpos):
     delay : array_like
         Geometric delay of each source per antenna. Shape: (az.size, Nants)
     """
-    C = tf.constant(299792458.) # speed of light in m/s
-    alt = tf.constant(np.pi/2.) - za
+    alt = tf.constant(np.pi/2., dtype=za.dtype) - za
     
     coord_proj = tf.stack([tf.math.sin(az)*tf.math.cos(alt), 
                            tf.math.cos(az)*tf.math.cos(alt),
@@ -76,7 +77,7 @@ def az_za_to_delay(az, za, antpos):
 
 
 def transform_coords():
-
+    
     pos = SkyCoord(ra=ra[0]*u.deg, dec=dec[0]*u.deg, frame='icrs')
 
     ObsStartTime = Time(times[0], scale='utc', format='jd', location=hera_location)
@@ -117,8 +118,10 @@ def compare_coords(ra, dec, times, lsts, use_cirs=False):
     # Convert coords
     pos = SkyCoord(ra=ra*u.deg, dec=dec*u.deg, frame='icrs')
     pos_now = pos.transform_to(frame_now)
-    ra_now = np.array( [float(x.to_string(unit=u.deg, decimal=True)) for x in pos_now.ra] )
-    dec_now = np.array( [float(x.to_string(unit=u.deg, decimal=True)) for x in pos_now.dec] )
+    ra_now = np.array( [float(x.to_string(unit=u.deg, decimal=True)) 
+                        for x in pos_now.ra] )
+    dec_now = np.array( [float(x.to_string(unit=u.deg, decimal=True)) 
+                         for x in pos_now.dec] )
     
     # Do the coordinate conversion now (input in degrees)
     za_az_eq = [eq_to_altaz(ra_now, dec_now, l, latitude=-30.7215, za=True) for l in lsts]
@@ -130,3 +133,4 @@ def compare_coords(ra, dec, times, lsts, use_cirs=False):
     eq_az = np.mod(eq_az, 2.*np.pi)
     
     return astropy_az, astropy_za, eq_az, eq_za
+    
