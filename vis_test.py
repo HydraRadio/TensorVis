@@ -1,6 +1,14 @@
 #!/usr/bin/env python
 """
 Example script to run a visibility simulation.
+
+Call using the following to include XLA JIT compilation:
+
+(CPU version)
+$ TF_XLA_FLAGS="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit" ./vis_test.py
+
+(GPU version)
+$ TF_XLA_FLAGS="--tf_xla_auto_jit=2" ./vis_test.py
 """
 import numpy as np
 import pylab as plt
