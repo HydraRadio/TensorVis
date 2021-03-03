@@ -103,7 +103,8 @@ def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams, nblocks=1):
     
     vis_blocks = tf.map_fn(vis_for_block, 
                            (az_blocks, za_blocks, flux_blocks, spectral_idx_blocks), 
-                           fn_output_signature=COMPLEX_TYPE) 
+                           dtype=COMPLEX_TYPE) 
+                           #fn_output_signature=COMPLEX_TYPE)  # TensorFlow>=v2.3
     # vis_blocks: (Nblocks, Nants, Nfreqs)
     
     # Sum blocks together
@@ -163,7 +164,8 @@ def vis(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams, nblocks=1):
                                      beams, nblocks=nblocks))
     
     # Loop over LSTs
-    vij_lst = tf.map_fn(vis_for_lst, lsts, fn_output_signature=COMPLEX_TYPE)
+    vij_lst = tf.map_fn(vis_for_lst, lsts, dtype=COMPLEX_TYPE)
+    #vij_lst = tf.map_fn(vis_for_lst, lsts, fn_output_signature=COMPLEX_TYPE) # TensorFlow>=v2.3
     return vij_lst
 
 

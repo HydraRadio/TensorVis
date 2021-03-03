@@ -11,34 +11,36 @@ $ TF_XLA_FLAGS="--tf_xla_auto_jit=2 --tf_xla_cpu_global_jit" ./vis_test.py
 $ TF_XLA_FLAGS="--tf_xla_auto_jit=2" ./vis_test.py
 """
 import numpy as np
-import pylab as plt
 import tensorflow as tf
+tf.debugging.set_log_device_placement(True)
+
 import time, sys
 import TensorVis as tv
 
 np.random.seed(10)
 
 FLOAT_TYPE = tf.float64
-DEBUG = False
+DEBUG = True
 NBLOCKS = 5 # Number of blocks to use when calculating point source contrib.
 
 # Default simulation settings
 Nlsts = 4
 Nfreqs = 8
-Nptsrc = 50000
+Nptsrc = 500
 if len(sys.argv) > 1:
     try:
         Nlsts = int(sys.argv[1])
         Nfreqs = int(sys.argv[2])
         Nptsrc = int(sys.argv[3])
     except:
-        print("Requires the following arguments: Nlsts Nfreqs Nptsrc")
+        print("Requires the following arguments: Nlsts Nfreqs Nptsrc [Nblocks]")
         sys.exit(1)
+    if len(sys.argv) == 5:
+        NBLOCKS = int(sys.argv[4])
 
 
 # Debugging and check for GPU
 if DEBUG:
-    tf.debugging.set_log_device_placement(True)
     device_name = tf.test.gpu_device_name()
     print("GPU device:", device_name)
     tf.config.list_physical_devices()
@@ -78,7 +80,7 @@ vis = tv.vis(antpos,
 t1 = time.time()
 
 # Output statistics
-print("Run too %3.3f sec" % (t1 - t0))
+print("Run took %3.3f sec" % (t1 - t0))
 print("Output shape:", vis.shape)
 print("Visibility mean:", np.mean(vis.numpy()))
 
