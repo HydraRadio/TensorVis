@@ -44,42 +44,46 @@ if DEBUG:
     tf.config.list_physical_devices()
 
 
-# Generate hex array and convert to antpos tensor
-antpos_dict = tv.utils.build_hex_array(hex_spec=(8,20), d=14.6)
-antpos_arr = np.column_stack([val for val in antpos_dict.values()]).T
-antpos = tf.convert_to_tensor(antpos_arr, dtype=FLOAT_TYPE)
-Nants = len(antpos_arr)
-print("Nants:", Nants)
+# Logging
+writer = tf.summary.create_file_writer("./logs")
+with writer.as_default():
 
-# Frequency and time arrays
-freqs = tf.convert_to_tensor(np.linspace(100., 120., Nfreqs), dtype=FLOAT_TYPE)
-lsts = tf.convert_to_tensor([2.4030742+0.001*i for i in range(Nlsts)], dtype=FLOAT_TYPE)
+    # Generate hex array and convert to antpos tensor
+    antpos_dict = tv.utils.build_hex_array(hex_spec=(8,20), d=14.6)
+    antpos_arr = np.column_stack([val for val in antpos_dict.values()]).T
+    antpos = tf.convert_to_tensor(antpos_arr, dtype=FLOAT_TYPE)
+    Nants = len(antpos_arr)
+    print("Nants:", Nants)
 
-# Generate randomly-placed point sources
-ra = tf.convert_to_tensor(np.random.uniform(0., np.pi, Nptsrc), 
-                          dtype=FLOAT_TYPE)
-dec = tf.convert_to_tensor(np.random.uniform(-0.5*np.pi, 0.5*np.pi, Nptsrc), 
-                           dtype=FLOAT_TYPE)
-flux = tf.convert_to_tensor(10.**np.random.uniform(-8., -6., Nptsrc), 
-                            dtype=FLOAT_TYPE)
-spectral_idx = tf.convert_to_tensor(-2.7*np.ones(Nptsrc), 
-                                    dtype=FLOAT_TYPE)
+    # Frequency and time arrays
+    freqs = tf.convert_to_tensor(np.linspace(100., 120., Nfreqs), dtype=FLOAT_TYPE)
+    lsts = tf.convert_to_tensor([2.4030742+0.001*i for i in range(Nlsts)], dtype=FLOAT_TYPE)
 
-# Construct beam interpolation function
-beams = tf.ones((Nants, 1), dtype=FLOAT_TYPE)
+    # Generate randomly-placed point sources
+    ra = tf.convert_to_tensor(np.random.uniform(0., np.pi, Nptsrc), 
+                              dtype=FLOAT_TYPE)
+    dec = tf.convert_to_tensor(np.random.uniform(-0.5*np.pi, 0.5*np.pi, Nptsrc), 
+                               dtype=FLOAT_TYPE)
+    flux = tf.convert_to_tensor(10.**np.random.uniform(-8., -6., Nptsrc), 
+                                dtype=FLOAT_TYPE)
+    spectral_idx = tf.convert_to_tensor(-2.7*np.ones(Nptsrc), 
+                                        dtype=FLOAT_TYPE)
 
-# Run visibility simulation
-t0 = time.time()
-vis = tv.vis(antpos, 
-             lsts, freqs, 
-             ra, dec, flux, spectral_idx, 
-             beams, 
-             nblocks=NBLOCKS)
-t1 = time.time()
+    # Construct beam interpolation function
+    beams = tf.ones((Nants, 1), dtype=FLOAT_TYPE)
 
-# Output statistics
-print("Run too %3.3f sec" % (t1 - t0))
-print("Output shape:", vis.shape)
-print("Visibility mean:", np.mean(vis.numpy()))
+    # Run visibility simulation
+    t0 = time.time()
+    vis = tv.vis(antpos, 
+                 lsts, freqs, 
+                 ra, dec, flux, spectral_idx, 
+                 beams, 
+                 nblocks=NBLOCKS)
+    t1 = time.time()
+
+    # Output statistics
+    tf.print("Run too %3.3f sec" % (t1 - t0))
+    tf.print("Output shape:", vis.shape)
+    tf.print("Visibility mean:", np.mean(vis.numpy()))
 
 
