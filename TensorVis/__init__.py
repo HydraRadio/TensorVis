@@ -1,4 +1,3 @@
 
-from .utils import *
 from .vis import *
-import .beams
+from . import beams, coords, utils

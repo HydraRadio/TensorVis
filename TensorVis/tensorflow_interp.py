@@ -4,7 +4,7 @@ https://github.com/tensorflow/graphics/blob/master/tensorflow_graphics/math/inte
 """
 
 import tensorflow as tf
-import .tensorflow_shape as shape
+from . import tensorflow_shape as shape
 
 def interpolate3d(grid_3d, sampling_points, name="trilinear_interpolate"):
   """Trilinear interpolation on a 3D regular grid.

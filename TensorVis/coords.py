@@ -6,8 +6,10 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates import FK5, ICRS
 
-HERA_LATITUDE = tf.constant(-30.7215*np.pi/180., dtype=tf.float64)
-C = tf.constant(299792458.) # speed of light in m/s
+FLOAT_TYPE = tf.float64
+
+HERA_LATITUDE = tf.constant(-30.7215*np.pi/180., dtype=FLOAT_TYPE)
+C = tf.constant(299792458., dtype=FLOAT_TYPE) # speed of light in m/s
 
 @tf.function
 def eq_to_az_za(ra, dec, lst, latitude=HERA_LATITUDE):
@@ -42,7 +44,7 @@ def eq_to_az_za(ra, dec, lst, latitude=HERA_LATITUDE):
     sin_az = tf.math.sin(ra - lst) * tf.math.cos(dec) / tf.math.cos(alt)
     cos_az = (tf.math.sin(dec) - tf.math.sin(lat) * sin_alt) \
            / (tf.math.cos(lat) * tf.math.cos(alt))
-    return tf.constant(0.5*np.pi, dtype=alt.dtype) - alt, \
+    return tf.constant(0.5*np.pi, dtype=FLOAT_TYPE) - alt, \
            tf.math.sign(tf.math.asin(sin_az)) * tf.math.acos(cos_az)
 
 
@@ -66,7 +68,7 @@ def az_za_to_delay(az, za, antpos):
     delay : array_like
         Geometric delay of each source per antenna. Shape: (az.size, Nants)
     """
-    alt = tf.constant(np.pi/2., dtype=za.dtype) - za
+    alt = tf.constant(np.pi/2., dtype=FLOAT_TYPE) - za
     
     coord_proj = tf.stack([tf.math.sin(az)*tf.math.cos(alt), 
                            tf.math.cos(az)*tf.math.cos(alt),
