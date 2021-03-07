@@ -8,7 +8,8 @@ from astropy.coordinates import FK5, ICRS
 
 FLOAT_TYPE = tf.float64
 
-HERA_LATITUDE = tf.constant(-30.7215*np.pi/180., dtype=FLOAT_TYPE)
+#HERA_LATITUDE = tf.constant(-30.7215*np.pi/180., dtype=FLOAT_TYPE)
+HERA_LATITUDE = tf.constant(-0.5361917991288512, dtype=FLOAT_TYPE)
 C = tf.constant(299792458., dtype=FLOAT_TYPE) # speed of light in m/s
 PI = tf.constant(np.pi, dtype=FLOAT_TYPE)
 

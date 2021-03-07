@@ -10,10 +10,9 @@ COMPLEX_TYPE = tf.complex128
 # Define constants
 C = 299792458. # speed of light in m/s
 freq_ref = tf.constant(100.e6, dtype=FLOAT_TYPE) # Hz
-phase_fac = tf.constant(2.*np.pi, dtype=FLOAT_TYPE) # multiply nu in Hz
+phase_fac = tf.constant(2.*np.pi, dtype=FLOAT_TYPE)
 ZERO = tf.constant(0., dtype=FLOAT_TYPE)
 PI = tf.constant(np.pi, dtype=FLOAT_TYPE)
-# 2 pi d / lambda = 2 pi d f / c
 
 
 @tf.function
@@ -67,8 +66,6 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     # FIXME: If only one beam pattern is provided, memory can be saved here 
     # by using Nants -> 1 in the A operator
     
-    A = 0.*A + 1. # FIXME
-    
     # Zero-out sources below the horizon
     flux_masked = tf.where(za < PI/2., flux, 0.)
     
@@ -88,14 +85,8 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     # ang_freq: (Nfreqs, 1)
     # phase: (Nants, Nptsrc, Nfreqs)
     
-    #tf.print("TV TAU:", tau)
-    
     # Multiply amplitude by phase factor
     # v . exp(i.phase): (Nants, Nfreqs, Nptsrc) x (Nants, Nptsrc, Nfreqs)
-    #vis = tf.einsum('ijk,ikj->ij', v, tf.exp(tf.complex(ZERO, phase)) )
-    #vis = tf.tensordot(v, tf.exp(tf.complex(ZERO, phase)), axes=[[2], [1]] )
-    # vis: (Nants, Nfreqs)
-    
     vis = tf.einsum('ijk,ikj->ijk', v, tf.exp(tf.complex(ZERO, phase)) )
     # vis: (Nants, Nfreqs, Nptsrc)
     
@@ -156,6 +147,7 @@ def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams,
     flux_blocks = tf.reshape(flux, (nblocks, -1))
     spectral_idx_blocks = tf.reshape(spectral_idx, (nblocks, -1))
     
+    # FIXME: Chunk by frequency instead
     # Loop to calculate each block in turn and update
     vis_for_block = lambda inp: vis_ptsrc_block(antpos, freqs, 
                                                 inp[0], inp[1], inp[2], inp[3], 

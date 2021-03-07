@@ -57,7 +57,8 @@ def construct_beam_grid(uvb, Nza, Naz, freq=None, axis=0, feed=0, spw=0,
     # Interpolate beam on 3D grid
     # Returns array of shape: Naxes_vec, Nspws, Nfeeds, Nfreqs, Naz * Nza
     az2d, za2d = np.meshgrid(az, za)
-    beam, basis_vec = uvb.interp(az2d.flatten(), za2d.flatten(), freq_array=freq, 
+    beam, basis_vec = uvb.interp(az2d.flatten(), za2d.flatten(), 
+                                 freq_array=np.atleast_1d(freq), 
                                  **uvbeam_interp_opts)
     
     # Reshape grid
@@ -74,7 +75,7 @@ def construct_beam_grid(uvb, Nza, Naz, freq=None, axis=0, feed=0, spw=0,
     
 
 @tf.function
-def coords_for_interp(za, az, freqs, freq_range, dtype=tf.float64):
+def coords_for_interp(za, az, freqs, freq_range, grid_shape, dtype=tf.float64):
     """
     Construct a Tensor with coordinates within the unit cube for each zenith 
     angle and azimuth, at each frequency. These are the coordinates that the 
@@ -94,6 +95,9 @@ def coords_for_interp(za, az, freqs, freq_range, dtype=tf.float64):
         Tuple or list of len(2), with the maximum and minimum of the frequency 
         range that will be covered by the interpolation grid.
     
+    grid_shape : tuple
+        Shape of interpolation data grid, (Ngrid_za, Ngrid_az, Ngrid_freq).
+    
     dtype : tf.dtype
         Data type to use for coordinate Tensors. Default: tf.float64.
     
@@ -106,23 +110,27 @@ def coords_for_interp(za, az, freqs, freq_range, dtype=tf.float64):
     # Unit interval datatype (can be reduced precision)
     unit_type = tf.float64
     
+    # Interpolation grid size
+    Ngrid_za, Ngrid_az, Ngrid_freq = grid_shape
+    
     # Convert frequency array to right shape/type
     freqs = tf.squeeze(tf.convert_to_tensor(freqs, dtype=dtype))
     Nfreqs = freqs.shape[0]
-    Nptsrc = tf.convert_to_tensor([za.shape[0],], tf.int32) # must be int32/64, for tf.tile
+    Nptsrc = tf.convert_to_tensor([za.shape[0],], tf.int32) # int32/64 for tf.tile
     
     # Expand arrays to get full set of sample points
-    az_rpt = tf.repeat(tf.convert_to_tensor(az, dtype=dtype), 
-                       Nfreqs)
-    za_rpt = tf.repeat(tf.convert_to_tensor(za, dtype=dtype), 
-                       Nfreqs)
+    az_rpt = tf.repeat(tf.convert_to_tensor(az, dtype=dtype), Nfreqs)
+    za_rpt = tf.repeat(tf.convert_to_tensor(za, dtype=dtype), Nfreqs)
     freq_rpt = tf.tile(freqs, Nptsrc)
     
     # Convert arrays to unit interval and cast to different dtype
-    az_unit = tf.cast(unit_interval(az_rpt, 0., 2.*np.pi), dtype=unit_type)
-    za_unit = tf.cast(unit_interval(za_rpt, 0., np.pi/2.), dtype=unit_type)
-    freq_unit = tf.cast(unit_interval(freq_rpt, freq_range[0], freq_range[1]), 
-                                      dtype=unit_type)
+    az_unit = tf.cast(unit_interval(az_rpt, 0., 2.*np.pi, scale_factor=Ngrid_az), 
+                      dtype=unit_type)
+    za_unit = tf.cast(unit_interval(za_rpt, 0., np.pi/2., scale_factor=Ngrid_za), 
+                      dtype=unit_type)
+    freq_unit = tf.cast(unit_interval(freq_rpt, freq_range[0], freq_range[1], 
+                                      Ngrid_freq), 
+                        dtype=unit_type)
     
     # Combine coords into a structure of the expected shape
     sample_pts = tf.expand_dims(tf.transpose( 
@@ -165,8 +173,9 @@ def interpolate_beam(grid_re, grid_im, za, az, freqs, freq_range, dtype=tf.float
         for each requested frequency.
     """
     # Put sample points in appropriately-scaled unit cube
+    grid_shape = (grid_re.shape[2], grid_re.shape[1], grid_re.shape[3]) # za, az, freq
     sample_pts = coords_for_interp(za, az, freqs, freq_range=freq_range, 
-                                   dtype=dtype)
+                                   grid_shape=grid_shape, dtype=dtype)
     
     # Interpolate on grid
     beam_re = interpolate3d(grid_re, sample_pts)
