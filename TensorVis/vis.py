@@ -10,8 +10,9 @@ COMPLEX_TYPE = tf.complex128
 # Define constants
 C = 299792458. # speed of light in m/s
 freq_ref = tf.constant(100.e6, dtype=FLOAT_TYPE) # Hz
-phase_fac = tf.constant(-2. * np.pi / C, dtype=FLOAT_TYPE) # multiply nu in Hz
+phase_fac = tf.constant(2.*np.pi, dtype=FLOAT_TYPE) # multiply nu in Hz
 ZERO = tf.constant(0., dtype=FLOAT_TYPE)
+PI = tf.constant(np.pi, dtype=FLOAT_TYPE)
 # 2 pi d / lambda = 2 pi d f / c
 
 
@@ -66,15 +67,20 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     # FIXME: If only one beam pattern is provided, memory can be saved here 
     # by using Nants -> 1 in the A operator
     
+    A = 0.*A + 1. # FIXME
+    
+    # Zero-out sources below the horizon
+    flux_masked = tf.where(za < PI/2., flux, 0.)
+    
     # Amplitude part of product used to form visibilities for this antenna
     # (sqrt of intensity, single antenna pattern)
-    v = tf.sqrt(flux) * (tf.expand_dims(freqs, 1) / freq_ref)**(0.5*spectral_idx)
+    v = tf.sqrt(flux_masked) * (tf.expand_dims(freqs, 1) / freq_ref)**(0.5*spectral_idx)
     v = tf.multiply(A, tf.complex(v, ZERO)) # multiply by antenna pattern
     # v: (Nfreqs, Nptsrc)
     # A: (Nants, Nfreqs, Nptsrc) - since Nptsrc = Naz
     # v <- A.v: (Nants, Nfreqs, Nptsrc)
     
-    # Calculate baseline delays and phase factor 
+    # Calculate baseline delays and phase factor
     tau = coords.az_za_to_delay(az, za, antpos)
     ang_freq = phase_fac * tf.expand_dims(freqs, 1) # freqs in Hz
     phase = tf.tensordot(tf.expand_dims(tau, 0), ang_freq, axes=[0,1]) # tau in s
@@ -82,11 +88,20 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     # ang_freq: (Nfreqs, 1)
     # phase: (Nants, Nptsrc, Nfreqs)
     
-    # Multiply amplitude by phase factor and sum over all ptsrc contributions
+    #tf.print("TV TAU:", tau)
+    
+    # Multiply amplitude by phase factor
     # v . exp(i.phase): (Nants, Nfreqs, Nptsrc) x (Nants, Nptsrc, Nfreqs)
-    vis = tf.einsum('ijk,ikj->ij', v, tf.exp(tf.complex(ZERO, phase)) )
+    #vis = tf.einsum('ijk,ikj->ij', v, tf.exp(tf.complex(ZERO, phase)) )
+    #vis = tf.tensordot(v, tf.exp(tf.complex(ZERO, phase)), axes=[[2], [1]] )
     # vis: (Nants, Nfreqs)
-    return vis
+    
+    vis = tf.einsum('ijk,ikj->ijk', v, tf.exp(tf.complex(ZERO, phase)) )
+    # vis: (Nants, Nfreqs, Nptsrc)
+    
+    # Perform outer product to get visibilities and sum
+    vij = tf.einsum('kij,lij->kli', tf.math.conj(vis), vis)
+    return vij
 
 
 @tf.function
@@ -157,8 +172,9 @@ def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams,
     v = tf.reduce_sum(vis_blocks, axis=0) # v: (Nants, Nfreqs)
     
     # Perform outer product to get visibilities
-    vij = tf.einsum('ik,jk->ijk', v, tf.math.conj(v))
-    return vij
+    #vij = tf.einsum('ik,jk->ijk', tf.math.conj(v), v)
+    #return vij
+    return v
 
 
 @tf.function
@@ -208,7 +224,11 @@ def vis(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams, freq_range,
     """
     # Function to calculate source coords and visibilities for a single LST
     def vis_for_lst(lst):
-        az, za = coords.eq_to_az_za(ra, dec, lst)
+        #az, za = coords.eq_to_az_za(ra, dec, lst)
+        topo_cosines = coords.equatorial_to_topocentric(ra, dec, lst)
+        az, za = coords.topocentric_to_az_za(topo_cosines[1], topo_cosines[0])
+        #_tau = tv.coords.topocentric_to_delay(topo_cosines, antpos)
+        
         return tf.stack(vis_snapshot(antpos, freqs, 
                                      az, za, flux, spectral_idx, 
                                      beams=beams, freq_range=freq_range, 

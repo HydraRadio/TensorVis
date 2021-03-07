@@ -56,7 +56,8 @@ def construct_beam_grid(uvb, Nza, Naz, freq=None, axis=0, feed=0, spw=0,
     
     # Interpolate beam on 3D grid
     # Returns array of shape: Naxes_vec, Nspws, Nfeeds, Nfreqs, Naz * Nza
-    beam, basis_vec = uvb.interp(az, za, freq_array=freq, az_za_grid=True, 
+    az2d, za2d = np.meshgrid(az, za)
+    beam, basis_vec = uvb.interp(az2d.flatten(), za2d.flatten(), freq_array=freq, 
                                  **uvbeam_interp_opts)
     
     # Reshape grid
