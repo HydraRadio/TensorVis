@@ -100,7 +100,8 @@ with writer.as_default():
 
     # Construct interpolation grid for beam
     grid_re, grid_im = tv.beams.construct_beam_grid(uvb, 
-                                                    Nza=100, Naz=101, freq=None, 
+                                                    Nza=100, Naz=101, 
+                                                    freq=np.unique(uvb.freq_array), 
                                                     axis=0, feed=0, spw=0, 
                                                     dtype=tf.float64)
     beams = tf.expand_dims(tf.complex(grid_re, grid_im), 
