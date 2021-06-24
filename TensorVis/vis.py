@@ -245,8 +245,9 @@ def vis_specidx(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams,
         topo_cosines = coords.equatorial_to_topocentric(ra, dec, lst)
         az, za = coords.topocentric_to_az_za(topo_cosines[1], topo_cosines[0])
         return tf.stack(vis_for_specidx_source(
-                                     antpos, freqs, az, za, 
-                                     flux, spectral_idx, 
+                                     antpos=antpos, freqs=freqs, 
+                                     az=az, za=za, 
+                                     flux=flux, spectral_idx=spectral_idx,
                                      beams=beams, freq_range=freq_range)
                                      )
     
@@ -323,8 +324,9 @@ def vis_sed(antpos, lsts, freqs, ra, dec, flux, beams, freq_range,
         topo_cosines = coords.equatorial_to_topocentric(ra, dec, lst)
         az, za = coords.topocentric_to_az_za(topo_cosines[1], topo_cosines[0])
         return tf.stack(vis_for_sed_source(
-                                     antpos, freqs, az, za, 
-                                     flux, beams=beams, freq_range=freq_range)
+                                     antpos=antpos, freqs=freqs, 
+                                     az=az, za=za, flux=flux, 
+                                     beams=beams, freq_range=freq_range)
                                      )
     
     # Output template for `vis_for_lst`
