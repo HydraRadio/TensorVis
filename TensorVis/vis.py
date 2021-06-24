@@ -16,10 +16,15 @@ PI = tf.constant(np.pi, dtype=FLOAT_TYPE)
 
 
 @tf.function
-def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range):
+def vis_for_specidx_source(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range):
     """
-    Calculate per-antenna visibility response (i.e. the sqrt of a full visibility) 
-    for a given set of point sources.
+    Calculate visibilities for a set of sources with given spectral indices. 
+    
+    Use this function if the source SED models are all power laws. This will 
+    calculate the SED for each source within this function, which should reduce 
+    CPU -> GPU memory transfer times. For more complicated SEDs, use the 
+    ``vis_for_sed_source`` function, which has a full (Nfreqs, Nsrc) Tensor as 
+    its input.
     
     Parameters
     ----------
@@ -32,11 +37,11 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     
     az, za : Tensor
         Tensors containing azimuth and zenith angle of point sources, in 
-        radians. Shape: (Nptsrc,).
+        radians. Shape: (Nsrc,).
     
     flux, spectral_idx : Tensor
         Tensors containing flux at 100 MHz and spectral index of point sources. 
-        The flux is in arbitrary units, usually Jy. Shape: (Nptsrc,)
+        The flux is in arbitrary units, usually Jy. Shape: (Nsrc,)
     
     beams : Tensor
         Data for the antenna patterns, to be used by an interpolation routine. 
@@ -52,19 +57,20 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
         Visibilities for all pairs of antennas, returned as a complex-valued 
         tensor of shape (Nants, Nants, Nfreqs).
     """
-    # Calculate beam values at zenith angle/azimuth of each source
-    Nants = tf.convert_to_tensor([antpos.shape[0], 1], dtype=tf.int32)
-    # FIXME: This just duplicates the same beam many times
-    A = tvbeams.interpolate_beam(tf.math.real(beams[0]), 
-                                 tf.math.imag(beams[0]), 
-                                 za, az, freqs, 
-                                 freq_range=freq_range, 
-                                 dtype=freq_ref.dtype)
-    A = tf.transpose(A) # A: (Nfreqs, Nptsrc)
-    A = tf.reshape(tf.tile(A, Nants), (-1, A.shape[0], A.shape[1]))
-    # A: (Nants, Nfreqs, Nptsrc)
-    # FIXME: If only one beam pattern is provided, memory can be saved here 
-    # by using Nants -> 1 in the A operator
+    # No. of frequencies and sources
+    Nfreqs = freqs.shape[0]
+    Nsrc = az.shape[0]
+    
+    # Interpolate beam values at zenith angle/azimuth of each source for each antenna
+    interp_fn = lambda bm: tf.transpose(
+                                tvbeams.interpolate_beam( tf.math.real(bm), 
+                                                          tf.math.imag(bm), 
+                                                          za, az, freqs, 
+                                                          freq_range=freq_range, 
+                                                          dtype=freq_ref.dtype))
+    A = tf.map_fn(interp_fn, (beams, ), 
+                  fn_output_signature=tf.TensorSpec((Nfreqs, Nsrc), dtype=COMPLEX_TYPE)) 
+    # A: (Nants, Nfreqs, Nsrc)
     
     # Zero-out sources below the horizon
     flux_masked = tf.where(za < PI/2., flux, 0.)
@@ -73,22 +79,22 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
     # (sqrt of intensity, single antenna pattern)
     v = tf.sqrt(flux_masked) * (tf.expand_dims(freqs, 1) / freq_ref)**(0.5*spectral_idx)
     v = tf.multiply(A, tf.complex(v, ZERO)) # multiply by antenna pattern
-    # v: (Nfreqs, Nptsrc)
-    # A: (Nants, Nfreqs, Nptsrc) - since Nptsrc = Naz
-    # v <- A.v: (Nants, Nfreqs, Nptsrc)
+    # v: (Nfreqs, Nsrc)
+    # A: (Nants, Nfreqs, Nsrc) - since Nsrc = Naz
+    # v <- A.v: (Nants, Nfreqs, Nsrc)
     
     # Calculate baseline delays and phase factor
     tau = coords.az_za_to_delay(az, za, antpos)
     ang_freq = phase_fac * tf.expand_dims(freqs, 1) # freqs in Hz
     phase = tf.tensordot(tf.expand_dims(tau, 0), ang_freq, axes=[0,1]) # tau in s
-    # tau: (Nants, Nptsrc)
+    # tau: (Nants, Nsrc)
     # ang_freq: (Nfreqs, 1)
-    # phase: (Nants, Nptsrc, Nfreqs)
+    # phase: (Nants, Nsrc, Nfreqs)
     
     # Multiply amplitude by phase factor
-    # v . exp(i.phase): (Nants, Nfreqs, Nptsrc) x (Nants, Nptsrc, Nfreqs)
+    # v . exp(i.phase): (Nants, Nfreqs, Nsrc) x (Nants, Nsrc, Nfreqs)
     vis = tf.einsum('ijk,ikj->ijk', v, tf.exp(tf.complex(ZERO, phase)) )
-    # vis: (Nants, Nfreqs, Nptsrc)
+    # vis: (Nants, Nfreqs, Nsrc)
     
     # Perform outer product to get visibilities and sum
     vij = tf.einsum('kij,lij->kli', tf.math.conj(vis), vis)
@@ -96,14 +102,13 @@ def vis_ptsrc_block(antpos, freqs, az, za, flux, spectral_idx, beams, freq_range
 
 
 @tf.function
-def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams, 
-                 freq_range, nblocks=1):
+def vis_for_sed_source(antpos, freqs, az, za, flux, beams, freq_range):
     """
-    Calculate visibilities for a set of point sources at a given snapshot in 
-    time. All auto- and cross-spectra are computed for the full set of antennas. 
+    Calculate visibilities for a set of sources with pre-computed SEDs (flux at 
+    each frequency channel).
     
-    Note that `antpos` is used as the reference datatype. All other inputs 
-    should be of the same type (i.e. `tf.float32` or `FLOAT_TYPE`).
+    See ``vis_for_specidx_source`` for a faster implementation specialsed to 
+    sources with power law SEDs.
     
     Parameters
     ----------
@@ -116,11 +121,11 @@ def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams,
     
     az, za : Tensor
         Tensors containing azimuth and zenith angle of point sources, in 
-        radians. Shape: (Nptsrc,).
+        radians. Shape: (Nsrc,).
     
-    flux, spectral_idx : Tensor
-        Tensors containing flux at 100 MHz and spectral index of point sources. 
-        The flux is in arbitrary units, usually Jy. Shape: (Nptsrc,)
+    flux : Tensor
+        Tensor containing flux of each source for each frequency channel. 
+        The flux is in arbitrary units, usually Jy. Shape: (Nfreqs, Nsrc).
     
     beams : Tensor
         Data for the antenna patterns, to be used by an interpolation routine. 
@@ -130,51 +135,64 @@ def vis_snapshot(antpos, freqs, az, za, flux, spectral_idx, beams,
         Tuple or list of len(2), with the maximum and minimum of the frequency 
         range that will be covered by the interpolation grid. 
     
-    nblocks : int, optional
-        Number of blocks to split the point source data into. This is useful if 
-        the catalogue results in intermediate calculations that give out-of-
-        memory errors, but slows down the calculation as a loop over blocks of 
-        point sources must be used instead. Default: 1.
+    Returns
+    -------
+    vis : Tensor
+        Visibilities for all pairs of antennas, returned as a complex-valued 
+        tensor of shape (Nants, Nants, Nfreqs).
     """
-    Nants = antpos.shape[0]
+    # No. of frequencies and sources
     Nfreqs = freqs.shape[0]
+    Nsrc = az.shape[0]
     
-    # Split intput ptsrc catalogue into chunks
-    if az.shape[0] % nblocks != 0:
-        raise ValueError("nblocks must be an integer factor of az.shape")
-    az_blocks = tf.reshape(az, (nblocks, -1))
-    za_blocks = tf.reshape(za, (nblocks, -1))
-    flux_blocks = tf.reshape(flux, (nblocks, -1))
-    spectral_idx_blocks = tf.reshape(spectral_idx, (nblocks, -1))
+    # Interpolate beam values at zenith angle/azimuth of each source for each antenna
+    interp_fn = lambda bm: tf.transpose(
+                                tvbeams.interpolate_beam( tf.math.real(bm), 
+                                                          tf.math.imag(bm), 
+                                                          za, az, freqs, 
+                                                          freq_range=freq_range, 
+                                                          dtype=freq_ref.dtype))
+    A = tf.map_fn(interp_fn, (beams, ), 
+                  fn_output_signature=tf.TensorSpec((Nfreqs, Nsrc), dtype=COMPLEX_TYPE)) 
+    # A: (Nants, Nfreqs, Nsrc)
     
-    # FIXME: Chunk by frequency instead
-    # Loop to calculate each block in turn and update
-    vis_for_block = lambda inp: vis_ptsrc_block(antpos, freqs, 
-                                                inp[0], inp[1], inp[2], inp[3], 
-                                                beams=beams, 
-                                                freq_range=freq_range)
+    # Zero-out sources below the horizon (za > pi/2)
+    flux_masked = tf.where(za < PI/2., flux, 0.)
     
-    vis_blocks = tf.map_fn(vis_for_block, 
-                           (az_blocks, za_blocks, flux_blocks, spectral_idx_blocks), 
-                           dtype=COMPLEX_TYPE) 
-                           #fn_output_signature=COMPLEX_TYPE)  # TensorFlow>=v2.3
-    # vis_blocks: (Nblocks, Nants, Nfreqs)
+    # Amplitude part of product used to form visibilities for this antenna
+    # (sqrt of intensity, single antenna pattern)
+    v = tf.sqrt(flux_masked)
+    v = tf.multiply(A, tf.complex(v, ZERO)) # multiply by antenna pattern
+    # v: (Nfreqs, Nsrc)
+    # A: (Nants, Nfreqs, Nsrc), since Nsrc = Naz
+    # v <- A.v: (Nants, Nfreqs, Nsrc)
     
-    # Sum blocks together
-    v = tf.reduce_sum(vis_blocks, axis=0) # v: (Nants, Nfreqs)
+    # Calculate baseline delays and phase factor
+    tau = coords.az_za_to_delay(az, za, antpos)
+    ang_freq = phase_fac * tf.expand_dims(freqs, 1) # freqs in Hz
+    phase = tf.tensordot(tf.expand_dims(tau, 0), ang_freq, axes=[0,1]) # tau in s
+    # tau: (Nants, Nsrc)
+    # ang_freq: (Nfreqs, 1)
+    # phase: (Nants, Nsrc, Nfreqs)
     
-    # Perform outer product to get visibilities
-    #vij = tf.einsum('ik,jk->ijk', tf.math.conj(v), v)
-    #return vij
-    return v
+    # Multiply amplitude by phase factor
+    # v . exp(i.phase): (Nants, Nfreqs, Nsrc) x (Nants, Nsrc, Nfreqs)
+    vis = tf.einsum('ijk,ikj->ijk', v, tf.exp(tf.complex(ZERO, phase)) )
+    # vis: (Nants, Nfreqs, Nsrc)
+    
+    # Perform outer product to get visibilities and sum
+    vij = tf.einsum('kij,lij->kli', tf.math.conj(vis), vis)
+    return vij
 
 
 @tf.function
-def vis(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams, freq_range, 
-        nblocks=1):
+def vis_specidx(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams, 
+                freq_range, parallel_iterations=None, swap_memory=False):
     """
-    Calculate visibilities for a set of point sources at a range of LSTS. 
-    All auto- and cross-spectra are computed for the full set of antennas. 
+    Calculate visibilities for a set of sources with power-law SEDs.
+    
+    All auto- and cross-spectra are computed for the full set of antennas, as a 
+    function of frequency and time.
     
     Note that `antpos` is used as the reference datatype. All other inputs 
     should be of the same type (i.e. `tf.float32` or `FLOAT_TYPE`).
@@ -193,42 +211,132 @@ def vis(antpos, lsts, freqs, ra, dec, flux, spectral_idx, beams, freq_range,
     
     ra, dec : Tensor
         Tensors containing Right Ascension and Declination of point sources, in 
-        radians. ** For reasonable accuracy, these should be evaluated at the 
-        present epoch **. Shape: (Nptsrc,).
+        radians. Shape: (Nsrc,).
     
     flux, spectral_idx : Tensor
         Tensors containing flux at 100 MHz and spectral index of point sources. 
-        The flux is in arbitrary units, usually Jy. Shape: (Nptsrc,)
+        The flux is in arbitrary units, usually Jy. Shape: (Nsrc,)
     
     beams : Tensor
         Data for the antenna patterns, to be used by an interpolation routine. 
-        Shape: (Nants, Ngrid_az, Ngrid_za, Ngridfreq).
+        Shape: (Nants, Ngrid_az, Ngrid_za, Ngrid_freq).
     
     freq_range : tuple or list
         Tuple or list of len(2), with the maximum and minimum of the frequency 
-        range that will be covered by the interpolation grid. 
+        range that will be covered by the beam interpolation grid. 
     
-    nblocks : int, optional
-        Number of blocks to split the point source data into. This is useful if 
-        the catalogue results in intermediate calculations that give out-of-
-        memory errors, but slows down the calculation as a loop over blocks of 
-        point sources must be used instead. Default: 1.
+    parallel_iterations : int, optional
+        The number of iterations of `tf.map_fn` allowed to run in parallel. The 
+        map is over LSTs. Parallel execution may not be used in TF eager 
+        execution mode. Default: None.
+    
+    swap_memory : bool, optional
+        Enables GPU-CPU memory swapping in the call to `tf.map_fn`. 
+        Default: False
+    
+    Returns
+    -------
+    vis : Tensor
+        Tensor of complex visibility values. Shape: (Nlsts, Nants, Nants, Nfreqs).
     """
     # Function to calculate source coords and visibilities for a single LST
-    def vis_for_lst(lst):
-        #az, za = coords.eq_to_az_za(ra, dec, lst)
+    @tf.function
+    def vis_for_lst_sed(lst):
         topo_cosines = coords.equatorial_to_topocentric(ra, dec, lst)
         az, za = coords.topocentric_to_az_za(topo_cosines[1], topo_cosines[0])
-        #_tau = tv.coords.topocentric_to_delay(topo_cosines, antpos)
-        
-        return tf.stack(vis_snapshot(antpos, freqs, 
-                                     az, za, flux, spectral_idx, 
-                                     beams=beams, freq_range=freq_range, 
-                                     nblocks=nblocks))
+        return tf.stack(vis_for_specidx_source(
+                                     antpos, freqs, az, za, 
+                                     flux, spectral_idx, 
+                                     beams=beams, freq_range=freq_range)
+                                     )
+    
+    # Output template for `vis_for_lst`
+    Nants = antpos.shape[0]
+    Nfreqs = freqs.shape[0]
+    vis_output_spec = tf.TensorSpec((Nants, Nants, Nfreqs), dtype=COMPLEX_TYPE)
     
     # Loop over LSTs
-    vij_lst = tf.map_fn(vis_for_lst, lsts, dtype=COMPLEX_TYPE)
-    #vij_lst = tf.map_fn(vis_for_lst, lsts, fn_output_signature=COMPLEX_TYPE) # TensorFlow>=v2.3
+    vij_lst = tf.map_fn(vis_for_lst_sed, lsts, 
+                        fn_output_signature=vis_output_spec, 
+                        parallel_iterations=parallel_iterations, 
+                        swap_memory=swap_memory)
+    return vij_lst
+
+
+@tf.function
+def vis_sed(antpos, lsts, freqs, ra, dec, flux, beams, freq_range, 
+                parallel_iterations=None, swap_memory=False):
+    """
+    Calculate visibilities for a set of sources with general SEDs.
+    
+    All auto- and cross-spectra are computed for the full set of antennas, as a 
+    function of frequency and time.
+    
+    Note that `antpos` is used as the reference datatype. All other inputs 
+    should be of the same type (i.e. `tf.float32` or `FLOAT_TYPE`).
+    
+    Parameters
+    ----------
+    antpos : Tensor
+        Tensor containing x,y,z positions of all antennas.
+        Shape (Nants, 3).
+    
+    lsts : Tensor
+        LST values to calculate visibilities at, in radians. Shape: (Nlsts,)
+    
+    freqs : Tensor
+        Tensor containing frequency values in Hz. Shape: (Nfreqs,).
+    
+    ra, dec : Tensor
+        Tensors containing Right Ascension and Declination of point sources, in 
+        radians. Shape: (Nsrc,).
+    
+    flux : Tensor
+        Tensor containing flux of each source for each frequency channel. 
+        The flux is in arbitrary units, usually Jy. Shape: (Nfreqs, Nsrc).
+    
+    beams : Tensor
+        Data for the antenna patterns, to be used by an interpolation routine. 
+        Shape: (Nants, Ngrid_az, Ngrid_za, Ngrid_freq).
+    
+    freq_range : tuple or list
+        Tuple or list of len(2), with the maximum and minimum of the frequency 
+        range that will be covered by the beam interpolation grid. 
+    
+    parallel_iterations : int, optional
+        The number of iterations of `tf.map_fn` allowed to run in parallel. The 
+        map is over LSTs. Parallel execution may not be used in TF eager 
+        execution mode. Default: None.
+    
+    swap_memory : bool, optional
+        Enables GPU-CPU memory swapping in the call to `tf.map_fn`. 
+        Default: False
+    
+    Returns
+    -------
+    vis : Tensor
+        Tensor of complex visibility values. Shape: (Nlsts, Nants, Nants, Nfreqs).
+    """
+    # Function to calculate source coords and visibilities for a single LST
+    @tf.function
+    def vis_for_lst(lst):
+        topo_cosines = coords.equatorial_to_topocentric(ra, dec, lst)
+        az, za = coords.topocentric_to_az_za(topo_cosines[1], topo_cosines[0])
+        return tf.stack(vis_for_sed_source(
+                                     antpos, freqs, az, za, 
+                                     flux, beams=beams, freq_range=freq_range)
+                                     )
+    
+    # Output template for `vis_for_lst`
+    Nants = antpos.shape[0]
+    Nfreqs = freqs.shape[0]
+    vis_output_spec = tf.TensorSpec((Nants, Nants, Nfreqs), dtype=COMPLEX_TYPE)
+    
+    # Loop over LSTs
+    vij_lst = tf.map_fn(vis_for_lst, lsts, 
+                        fn_output_signature=vis_output_spec, 
+                        parallel_iterations=parallel_iterations, 
+                        swap_memory=swap_memory)
     return vij_lst
 
 
